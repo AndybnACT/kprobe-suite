@@ -1,9 +1,11 @@
-KDIR=/source/linux-4.4.x/
+KDIR=/path/to/linux/
+CURDIR=$(PWD)
 
 obj-m += myprobes.o
-myprobes-y := kprobe_example.o
+myprobes-y := kprobe.o
 
-ccflags-y := -std=gnu99 -Wno-declaration-after-statement -I $(KDIR)drivers/nvme/host -I $(KDIR)
+ccflags-y := -std=gnu99 -Wno-declaration-after-statement -I $(KDIR) 
+ldflags-y += -T $(CURDIR)/linker.ld
 
 .PHONY: all clean
 
@@ -12,4 +14,4 @@ all:
 
 clean:
 	make -C $(KDIR) M=$(PWD) clean
-# DO NOT DELETE
+
