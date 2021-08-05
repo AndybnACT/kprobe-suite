@@ -1,74 +1,68 @@
 /*
- * NOTE: This example is works on x86 and powerpc.
- * Here's a sample kernel module showing the use of kprobes to dump a
- * stack trace and selected registers when _do_fork() is called.
- *
+ * NOTE: This example is works on x86
  * For more information on theory of operation of kprobes, see
  * Documentation/kprobes.txt
- *
- * You will see the trace data in /var/log/messages and on the console
- * whenever _do_fork() is invoked to create a new process.
  */
 
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/printk.h>
 #include <linux/kprobes.h>
-#include <linux/blkdev.h>
-#include <linux/completion.h>
-#include <linux/delay.h>
-#include <linux/percpu-refcount.h>
-#include <asm-generic/atomic-long.h>
 
-struct completion wait;
-
-/*
- * fault_handler: this is called if an exception is generated for any
- * instruction within the pre- or post-handler, or when Kprobes
- * single-steps the probed instruction.
- */
-static int handler_fault(struct kprobe *p, struct pt_regs *regs, int trapnr)
-{
-	printk(KERN_INFO "fault_handler: p->addr = 0x%p, trap #%dn",
-		p->addr, trapnr);
-	/* Return 0 because we don't handle the fault. */
-	return 0;
-}
+#include <linux/fs.h>
 
 #define DEFINE_PROBE(_sym) \
 	int probe_##_sym(struct kprobe *p, struct pt_regs *regs);	\
 	struct kprobe  _sym##_probe = {	\
 		.symbol_name	= #_sym,		\
 		.pre_handler	= probe_##_sym,	\
-		.fault_handler	= handler_fault,	\
 	};\
 	u64 __attribute__((section (".my_probes"))) _sym##addr = (u64) &_sym##_probe;\
 	int probe_##_sym(struct kprobe *p, struct pt_regs *regs)
 
-DEFINE_PROBE(nvme_dev_disable)
+#define DEFINE_PROBE_AT(name, _sym, off) \
+	int probe_##_sym##_##name(struct kprobe *p, struct pt_regs *regs);	\
+	struct kprobe  name##_probe = {	\
+		.symbol_name	= #_sym,		\
+		.pre_handler= probe_##_sym##_##name,	\
+		.offset		= off,			\
+	};\
+	u64 __attribute__((section (".my_probes"))) _sym##_##name = (u64) &name##_probe;\
+	int probe_##_sym##_##name(struct kprobe *p, struct pt_regs *regs)
+
+#define DEFINE_POST_PROBE_AT(_sym, off) \
+	void probe_##_sym##off(struct kprobe *p, struct pt_regs *regs, unsigned long flags);	\
+	struct kprobe  _sym##_probe##off = {	\
+		.symbol_name	= #_sym,		\
+		.post_handler= probe_##_sym##off,	\
+		.offset		= off,			\
+	};\
+	u64 __attribute__((section (".my_probes"))) _sym##addr##off = (u64) &_sym##_probe;\
+	void probe_##_sym##off(struct kprobe *p, struct pt_regs *regs, unsigned long flags)
+
+/*
+ * Define your kprobe is as simple as
+ * DEFINE_PROBE(a_symbol_shown_on_kallsyms)
+ * {
+ * 	do_something_with_first_arg(regs->di);
+ * 	...
+ * 	return 0;
+ * }
+ *
+ * You may define as many kprobe as you wish, play with variables and the
+ * internal state of the kernel, and the magic of linker script will take care
+ * of the rest of things.
+ *
+ */
+
+DEFINE_PROBE(do_open_execat)
 {
-	reinit_completion(&wait);
-	complete(&wait);
-	pr_warn("complete!!\n");
+	const struct filename *filename  = (void *)regs->si;
+	pr_info("execv: %s\n", filename->name);
+
 	return 0;
 }
 
-DEFINE_PROBE(nvme_scan_work)
-{
-	init_completion(&wait);
-	enable_kprobe(&nvme_dev_disable_probe);
-	pr_warn("enable dev_disable_probe, waiting\n");
-	wait_for_completion(&wait);
-	pr_warn("done, disable dev_disable_probe\n");
-	disable_kprobe(&nvme_dev_disable_probe);
-	return 0;
-}
-
-DEFINE_PROBE(nvme_reset_work)
-{
-	pr_alert("reseting \n");
-	return 0;
-}
 
 static int nr_probes;
 static struct kprobe **myprobes;
@@ -82,6 +76,7 @@ static int __init kprobe_init(void)
 			  (void *) &__MYPROBE_SECTION_START) / sizeof (void*);
 	myprobes = (void *) &__MYPROBE_SECTION_START;
 
+	pr_info("nr_probes = %d, myprobes = %llx\n", nr_probes, (u64)myprobes);
 	for (size_t i = 0; i < nr_probes; i++)
 		printk(KERN_INFO "kprobe: %s\n", myprobes[i]->symbol_name);
 
@@ -91,7 +86,7 @@ static int __init kprobe_init(void)
 		return ret;
 	}
 
-	disable_kprobe(&nvme_dev_disable_probe);
+//	disable_kprobe(&__nvme_submit_cmd_probe);
 
 	for (size_t i = 0; i < nr_probes; i++)
 		printk(KERN_INFO "Planted kprobe at %px\n", (void*) myprobes[i]->addr);
@@ -107,3 +102,4 @@ static void __exit kprobe_exit(void)
 module_init(kprobe_init)
 module_exit(kprobe_exit)
 MODULE_LICENSE("GPL");
+
