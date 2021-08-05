@@ -11,6 +11,8 @@
 
 #include <linux/fs.h>
 
+#define KGDB_BREAK()  asm volatile ("int $3\r\n")
+
 #define DEFINE_PROBE(_sym) \
 	int probe_##_sym(struct kprobe *p, struct pt_regs *regs);	\
 	struct kprobe  _sym##_probe = {	\
@@ -59,6 +61,8 @@ DEFINE_PROBE(do_open_execat)
 {
 	const struct filename *filename  = (void *)regs->si;
 	pr_info("execv: %s\n", filename->name);
+
+	// KGDB_BREAK();
 
 	return 0;
 }
